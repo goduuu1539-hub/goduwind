@@ -20,6 +20,9 @@ coverage/
 .env.local
 .env.*.local
 
+# Uploads
+/uploads/
+
 # IDE
 .vscode/
 .idea/
