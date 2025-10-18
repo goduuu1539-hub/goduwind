@@ -1,386 +1,226 @@
-# Livestream API - Node.js Backend
+# Livestream API Backend
 
-A minimal Node.js backend implementing livestream API with Express and WebSocket (ws) for real-time collaboration.
+Production-ready RESTful backend for a collaborative livestreaming experience. The service exposes JSON APIs for authentication, session management, and slides as well as a WebSocket gateway for real-time collaboration. It is built with TypeScript, Express, Prisma, PostgreSQL, and `ws`.
 
 ## Features
 
-### HTTP APIs
-- **Authentication**: signup/signin with token-based auth
-- **Session Management**: CRUD operations, start/end sessions
-- **Slide Management**: upload PDF/images, create empty slides, delete slides
-- **State API**: retrieve full session state
+- **Authentication** – Signup/signin with hashed passwords and JWT authentication.
+- **Session lifecycle** – Create sessions with human-friendly IDs, start/end control, and persistent state.
+- **Slide management** – Upload PDFs (with placeholder previews), upload images, create empty slides, and delete slides.
+- **Realtime collaboration** – WebSocket server for strokes, chat, slide updates, and admin controls.
+- **File uploads** – Multer-powered uploads saved to `/uploads` and served via HTTP.
+- **Database persistence** – Prisma ORM backed by PostgreSQL for users, sessions, slides, and strokes.
+- **Docker-ready** – Containerized services with `docker-compose` bringing up PostgreSQL and the API.
 
-### WebSocket Events
-- **subscribe**: join a session as viewer
-- **admin_subscribe**: join as admin/presenter
-- **stroke**: draw strokes on slides
-- **clear**: clear all strokes (admin only)
-- **chat_message**: send chat messages
-- **chat_enable**: enable/disable chat (admin only)
+## Technology Stack
 
-### Storage
-- File uploads stored locally in `/uploads` directory
-- In-memory data structures (no database required)
+- Node.js 20
+- TypeScript + Express 4
+- Prisma ORM + PostgreSQL
+- WebSockets via `ws`
+- Validation via Zod
+- Authentication via `jsonwebtoken` and `bcryptjs`
+- File uploads with Multer
 
-## Getting Started
+## Prerequisites
 
-### 1. Install Dependencies
+- Node.js >= 20
+- npm >= 9
+- PostgreSQL 14+ (for local development)
 
-```bash
-npm install
-```
+## Environment configuration
 
-### 2. Configure Environment
-
-Create a `.env` file (or copy from `.env.example`):
+Create a `.env` file based on the template:
 
 ```bash
 cp .env.example .env
 ```
 
-The default configuration is:
+`/.env.example` lists the required variables:
 
 ```
 PORT=3000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/livestream
+JWT_SECRET=change-me
+ASSET_BASE_URL=http://localhost:3000
+UPLOAD_DIR=uploads
 ```
 
-### 3. Run the Server
+Adjust `DATABASE_URL`, `JWT_SECRET`, and `ASSET_BASE_URL` as needed for your environment.
+
+## Local development
+
+1. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+2. **Generate Prisma client**
+   ```bash
+   npx prisma generate
+   ```
+
+3. **Apply database migrations**
+   ```bash
+   npm run prisma:migrate:dev
+   # or for an existing database
+   npm run prisma:migrate
+   ```
+
+4. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+   The REST API is served on `http://localhost:3000` (configurable via `PORT`).
+
+## Database utilities
+
+- `npm run prisma:generate` – regenerate Prisma client
+- `npm run prisma:migrate:dev` – create/apply migrations in development (interactive)
+- `npm run prisma:migrate` – apply migrations in production / CI environments
+- `npm run prisma:studio` – open Prisma Studio for inspecting data
+
+## Docker usage
+
+Build and start the stack (API + PostgreSQL):
 
 ```bash
-npm start
+docker-compose up --build
 ```
 
-The server will start on `http://localhost:3000` (or the port specified in `.env`).
+The compose file provisions:
+- `db`: PostgreSQL 16 with persistent volume `postgres-data`
+- `app`: Node.js API container (builds TypeScript, runs migrations on boot)
+- `uploads`: named volume mounted at `/app/uploads`
 
-## API Documentation
+Before first run you may want to tailor `.env` or environment variables in `docker-compose.yml`.
+
+## API Endpoints
+
+All JSON responses include an `error` field on failure. Unless otherwise stated, endpoints under `/api/v1` require the `Authorization: Bearer <token>` header.
 
 ### Authentication
 
-#### Signup
-```
-POST /signup
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "password123",
-  "role": "user"  // optional
-}
-
-Response: { "token": "...", "user": {...} }
-```
-
-#### Signin
-```
-POST /signin
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "password123"
-}
-
-Response: { "token": "...", "user": {...} }
-```
-
-**Note**: All endpoints below require authentication via `Authorization: Bearer <token>` header.
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/signup` | Create a user. Returns `{ message, userId, email }`. |
+| `POST` | `/api/v1/signin` | Login and receive `{ token, userId }`. |
 
 ### Sessions
 
-#### Create Session
-```
-POST /sessions
-Content-Type: application/json
-
-{
-  "title": "My Session",
-  "description": "Optional description"
-}
-
-Response: { "id": "...", "title": "...", ... }
-```
-
-#### List Sessions
-```
-GET /sessions
-
-Response: [{ "id": "...", "title": "...", ... }]
-```
-
-#### Get Session
-```
-GET /sessions/:sessionId
-
-Response: { "id": "...", "title": "...", ... }
-```
-
-#### Update Session
-```
-PUT /sessions/:sessionId
-Content-Type: application/json
-
-{
-  "title": "Updated Title",
-  "description": "Updated description",
-  "chatEnabled": true
-}
-
-Response: { "id": "...", "title": "...", ... }
-```
-
-#### Delete Session
-```
-DELETE /sessions/:sessionId
-
-Response: 204 No Content
-```
-
-#### Start Session
-```
-POST /sessions/:sessionId/start
-
-Response: { "id": "...", "status": "live", ... }
-```
-
-#### End Session
-```
-POST /sessions/:sessionId/end
-
-Response: { "id": "...", "status": "ended", ... }
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/session` | Create a session and receive `{ sessionId }` (format `abc-def-ghi`). |
+| `GET` | `/api/v1/sessions` | List sessions owned by the authenticated user. |
+| `POST` | `/api/v1/session/:sessionId/start` | Start a session (400 if already started or ended). |
+| `POST` | `/api/v1/session/:sessionId/end` | End a live session (400 if not live). |
 
 ### Slides
 
-#### Upload PDF Slide
-```
-POST /sessions/:sessionId/slides/pdf
-Content-Type: multipart/form-data
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/session/:sessionId/slides/pdf` | Upload a PDF (`multipart/form-data`, `file`). Returns full slide list; preview URL is a placeholder image. |
+| `POST` | `/api/v1/session/:sessionId/slides/image` | Upload an image (`multipart/form-data`, `file`). Returns full slide list. |
+| `POST` | `/api/v1/session/:sessionId/slides` | Create an empty slide (optional JSON body `{ "title": "" }`). Returns full slide list. |
+| `DELETE` | `/api/v1/session/:sessionId/slide/:slideId` | Delete a slide and associated strokes. Returns updated slide list. |
 
-file: <PDF file>
+### Session state
 
-Response: { "id": "...", "type": "pdf", "url": "/uploads/...", ... }
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/session/:sessionId/state` | Retrieve `{ sessionId, currentSlideId, slides, strokes }` for the current slide. |
 
-#### Upload Image Slide
-```
-POST /sessions/:sessionId/slides/image
-Content-Type: multipart/form-data
+### Uploads
 
-file: <Image file>
+- Uploaded assets are saved under `UPLOAD_DIR` (default `uploads/`).
+- They are served at `GET /uploads/:filename`.
+- A placeholder SVG for PDFs is served from `GET /static/placeholders/pdf.svg`.
 
-Response: { "id": "...", "type": "image", "url": "/uploads/...", ... }
-```
+## WebSocket API
 
-#### Create Empty Slide
-```
-POST /sessions/:sessionId/slides/empty
-Content-Type: application/json
+Connect via: `ws://localhost:3000?token=<jwt>`
 
-{
-  "title": "Optional title"
-}
+Messages are JSON objects with `type` and `payload` fields. Supported client → server messages:
 
-Response: { "id": "...", "type": "empty", ... }
-```
+| Type | Payload | Description |
+|------|---------|-------------|
+| `SUBSCRIBE` | `{ roomId }` | Join a session as a viewer. |
+| `SUBSCRIBE_ADMIN` | `{ roomId }` | Join a session as admin (must be owner). |
+| `STROKE` | `{ sessionId, slideId, stroke }` | Broadcast a drawing stroke (admin only). |
+| `CLEAR_SLIDE` | `{ sessionId, slideId }` | Clear strokes for a slide (admin only). |
+| `CHAT_MESSAGE` | `{ sessionId, message }` | Send a chat message when chat is enabled. |
+| `CHAT_ENABLE` | `{ sessionId, enabled }` | Toggle chat availability (admin only). |
 
-#### Delete Slide
-```
-DELETE /sessions/:sessionId/slides/:slideId
+Server → client notifications include:
 
-Response: 204 No Content
-```
+- `SUBSCRIBED` – initial session snapshot `{ isAdmin, session, strokes, chatMessages }`
+- `STROKE` – stroke payload for drawings
+- `CLEAR_SLIDE` – slide cleared notification `{ slideId }`
+- `SLIDE_CHANGED` – updated slide list `{ sessionId, currentSlideId, slides }`
+- `CHAT_MESSAGE` – broadcast chat message `{ id, message, email, timestamp }`
+- `CHAT_ENABLE` – chat availability changed `{ sessionId, enabled }`
+- `SESSION_STARTED` / `SESSION_ENDED` – lifecycle updates
+- `ERROR` – descriptive error message
 
-### State
-
-#### Get Session State
-```
-GET /sessions/:sessionId/state
-
-Response: {
-  "sessionId": "...",
-  "state": {
-    "id": "...",
-    "title": "...",
-    "status": "...",
-    "slides": [...],
-    "strokes": [...],
-    "chatMessages": [...],
-    ...
-  }
-}
-```
-
-## WebSocket Protocol
-
-Connect to `ws://localhost:3000` and send/receive JSON messages.
-
-### Client → Server Events
-
-#### Subscribe (Viewer)
-```json
-{
-  "type": "subscribe",
-  "sessionId": "session-id"
-}
-```
-
-#### Admin Subscribe (Presenter)
-```json
-{
-  "type": "admin_subscribe",
-  "sessionId": "session-id",
-  "token": "your-auth-token"
-}
-```
-
-#### Send Stroke
-```json
-{
-  "type": "stroke",
-  "stroke": {
-    "slideId": "slide-id",
-    "points": [[x1, y1], [x2, y2], ...],
-    "color": "#000000",
-    "width": 2
-  }
-}
-```
-
-#### Clear Strokes (Admin only)
-```json
-{
-  "type": "clear"
-}
-```
-
-#### Send Chat Message
-```json
-{
-  "type": "chat_message",
-  "text": "Hello everyone!",
-  "username": "John"
-}
-```
-
-#### Enable/Disable Chat (Admin only)
-```json
-{
-  "type": "chat_enable",
-  "enabled": true
-}
-```
-
-### Server → Client Events
-
-#### Subscribed Confirmation
-```json
-{
-  "type": "subscribed",
-  "sessionId": "...",
-  "isAdmin": true
-}
-```
-
-#### Session State
-```json
-{
-  "type": "session_state",
-  "sessionId": "...",
-  "state": { ... }
-}
-```
-
-#### Stroke Broadcast
-```json
-{
-  "type": "stroke",
-  "sessionId": "...",
-  "stroke": { ... }
-}
-```
-
-#### Clear Broadcast
-```json
-{
-  "type": "clear",
-  "sessionId": "..."
-}
-```
-
-#### Chat Message Broadcast
-```json
-{
-  "type": "chat_message",
-  "sessionId": "...",
-  "message": {
-    "id": "...",
-    "username": "...",
-    "text": "...",
-    "timestamp": "..."
-  }
-}
-```
-
-#### Chat Enable Broadcast
-```json
-{
-  "type": "chat_enable",
-  "sessionId": "...",
-  "enabled": true
-}
-```
-
-#### Error
-```json
-{
-  "type": "error",
-  "message": "Error description"
-}
-```
-
-## Project Structure
+## Project structure
 
 ```
 .
-├── server.js           # Main server file with all APIs and WebSocket logic
-├── package.json        # Dependencies and scripts
-├── .env.example        # Environment variables template
-├── .env                # Local environment config (create this)
-├── .gitignore          # Git ignore rules
-├── README.md           # This file
-└── uploads/            # File upload directory (auto-created)
+├── prisma/
+│   └── schema.prisma
+├── public/
+│   └── placeholders/pdf.svg
+├── src/
+│   ├── index.ts
+│   ├── server/
+│   │   ├── app.ts
+│   │   ├── config/env.ts
+│   │   ├── controllers/
+│   │   │   ├── auth.controller.ts
+│   │   │   └── session.controller.ts
+│   │   ├── lib/prisma.ts
+│   │   ├── middleware/
+│   │   │   ├── auth.ts
+│   │   │   └── errorHandler.ts
+│   │   ├── routes/
+│   │   │   ├── auth.routes.ts
+│   │   │   ├── index.ts
+│   │   │   └── session.routes.ts
+│   │   └── utils/
+│   │       ├── httpError.ts
+│   │       ├── serializers.ts
+│   │       └── sessionId.ts
+│   └── ws/
+│       └── server.ts
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+├── tsconfig.json
+└── README.md
 ```
 
-## Notes
+## Testing the APIs
 
-- All data is stored in-memory and will be lost on server restart
-- File uploads are stored locally in the `/uploads` directory
-- Authentication uses simple token-based auth (tokens stored in-memory)
-- Passwords are hashed using SHA-256
-- WebSocket connections are maintained per session
-- Stroke history is limited to 5000 entries per session
-- Chat history is limited to 500 messages per session
+Use your preferred HTTP client (curl, HTTPie, Postman, etc.) and authenticate using the JWT received from `/api/v1/signin`.
 
-## Development
+Example flow:
 
-The server automatically creates the `/uploads` directory on startup if it doesn't exist.
-
-For development, you can use tools like:
-- **Postman** or **curl** for testing HTTP APIs
-- **wscat** or browser WebSocket clients for testing WebSocket events
-
-Example with curl:
 ```bash
 # Signup
-curl -X POST http://localhost:3000/signup \
+curl -X POST http://localhost:3000/api/v1/signup \
   -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"password123"}'
+  -d '{"email":"owner@example.com","password":"Password123"}'
 
-# Create session (use token from signup)
-curl -X POST http://localhost:3000/sessions \
+# Signin
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/signin \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{"title":"Test Session"}'
+  -d '{"email":"owner@example.com","password":"Password123"}' | jq -r '.token')
+
+# Create session
+curl -X POST http://localhost:3000/api/v1/session \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json"
 ```
 
 ## License

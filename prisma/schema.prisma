@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions Session[] @relation("SessionOwner")
+  strokes  Stroke[]
+}
+
+model Session {
+  id             String         @id
+  title          String
+  description    String?
+  ownerId        String
+  owner          User           @relation("SessionOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  status         SessionStatus  @default(DRAFT)
+  chatEnabled    Boolean        @default(true)
+  currentSlideId String?
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  slides Slide[]
+  strokes Stroke[]
+
+  @@index([ownerId])
+}
+
+model Slide {
+  id               String    @id @default(uuid())
+  sessionId        String
+  session          Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type             SlideType
+  title            String?
+  assetFilename    String?
+  assetOriginalName String?
+  assetMimeType    String?
+  assetSize        Int?
+  createdAt        DateTime  @default(now())
+  order            Int       @default(0)
+
+  strokes Stroke[]
+
+  @@index([sessionId])
+}
+
+model Stroke {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  slideId     String
+  slide       Slide    @relation(fields: [slideId], references: [id], onDelete: Cascade)
+  payload     Json
+  createdAt   DateTime @default(now())
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([slideId])
+}
+
+enum SessionStatus {
+  DRAFT
+  LIVE
+  ENDED
+}
+
+enum SlideType {
+  PDF
+  IMAGE
+  EMPTY
+}
